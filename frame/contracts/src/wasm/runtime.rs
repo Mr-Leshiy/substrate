@@ -24,7 +24,7 @@ use crate::{
 	wasm::env_def::ConvertibleToWasm,
 };
 use parity_wasm::elements::ValueType;
-use frame_support::{dispatch::DispatchError, ensure};
+use frame_support::{dispatch::DispatchError, ensure, traits::Get};
 use sp_std::prelude::*;
 use codec::{Decode, DecodeAll, Encode};
 use sp_runtime::traits::SaturatedConversion;
@@ -165,6 +165,8 @@ pub enum RuntimeToken {
 	Return(u32),
 	/// Weight of calling `seal_terminate`.
 	Terminate,
+	/// Weight that is added to `seal_terminate` for every byte of the terminated contract.
+	TerminateCodeSizeSurcharge(u32),
 	/// Weight of calling `seal_restore_to` per number of supplied delta entries.
 	RestoreTo(u32),
 	/// Weight of calling `seal_random`. It includes the weight for copying the subject.
@@ -235,6 +237,7 @@ where
 			Return(len) => s.r#return
 				.saturating_add(s.return_per_byte.saturating_mul(len.into())),
 			Terminate => s.terminate,
+			TerminateCodeSizeSurcharge(len) => s.terminate_per_code_byte.saturating_mul(len.into()),
 			RestoreTo(delta) => s.restore_to
 				.saturating_add(s.restore_to_per_delta.saturating_mul(delta.into())),
 			Random => s.random,
@@ -412,6 +415,18 @@ where
 			GasMeterResult::Proceed(amount) => Ok(amount),
 			GasMeterResult::OutOfGas => Err(Error::<E::T>::OutOfGas.into())
 		}
+	}
+
+	/// Correct previously charged gas amount.
+	pub fn adjust_gas<Tok>(&mut self, charged_amount: ChargedAmount, adjusted_amount: Tok)
+	where
+		Tok: Token<E::T, Metadata=HostFnWeights<E::T>>,
+	{
+		self.gas_meter.adjust_gas(
+			charged_amount,
+			&self.ext.schedule().host_fn_weights,
+			adjusted_amount,
+		);
 	}
 
 	/// Read designated chunk from the sandbox memory.
@@ -935,7 +950,12 @@ define_env!(Env, <E: Ext>,
 		let beneficiary: <<E as Ext>::T as frame_system::Config>::AccountId =
 			ctx.read_sandbox_memory_as(beneficiary_ptr, beneficiary_len)?;
 
-		ctx.ext.terminate(&beneficiary)?;
+		let charged = ctx.charge_gas(
+			RuntimeToken::TerminateCodeSizeSurcharge(<E::T as Config>::MaxCodeSize::get())
+		)?;
+		let code_len = ctx.ext.terminate(&beneficiary)?;
+		ctx.adjust_gas(charged, RuntimeToken::TerminateCodeSizeSurcharge(code_len));
+
 		Err(TrapReason::Termination)
 	},
 

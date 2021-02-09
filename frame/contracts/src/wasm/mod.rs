@@ -33,7 +33,7 @@ use crate::{
 use sp_std::prelude::*;
 use sp_core::crypto::UncheckedFrom;
 use codec::{Encode, Decode};
-use frame_support::dispatch::{DispatchError, DispatchResult};
+use frame_support::dispatch::DispatchError;
 use pallet_contracts_primitives::ExecResult;
 pub use self::runtime::{ReturnCode, Runtime, RuntimeToken};
 
@@ -125,7 +125,7 @@ where
 	pub fn store_code_unchecked(
 		original_code: Vec<u8>,
 		schedule: &Schedule<T>
-	) -> DispatchResult {
+	) -> Result<(), DispatchError> {
 		let executable = prepare::benchmarking::prepare_contract(original_code, schedule)
 			.map_err::<DispatchError, _>(Into::into)?;
 		code_cache::store(executable);
@@ -158,11 +158,11 @@ where
 		code_cache::store_decremented(self);
 	}
 
-	fn add_user(code_hash: CodeHash<T>) -> DispatchResult {
+	fn add_user(code_hash: CodeHash<T>) -> Result<u32, DispatchError> {
 		code_cache::increment_refcount::<T>(code_hash)
 	}
 
-	fn remove_user(code_hash: CodeHash<T>) {
+	fn remove_user(code_hash: CodeHash<T>) -> u32 {
 		code_cache::decrement_refcount::<T>(code_hash)
 	}
 
@@ -221,6 +221,10 @@ where
 		// dominated by the code size.
 		let len = self.original_code_len.saturating_add(self.code.len() as u32);
 		len.checked_div(self.refcount as u32).unwrap_or(len)
+	}
+
+	fn pristine_size(&self) -> u32 {
+		self.original_code_len
 	}
 }
 
@@ -352,11 +356,11 @@ mod tests {
 		fn terminate(
 			&mut self,
 			beneficiary: &AccountIdOf<Self::T>,
-		) -> Result<(), DispatchError> {
+		) -> Result<u32, DispatchError> {
 			self.terminations.push(TerminationEntry {
 				beneficiary: beneficiary.clone(),
 			});
-			Ok(())
+			Ok(0)
 		}
 		fn restore_to(
 			&mut self,
@@ -456,7 +460,7 @@ mod tests {
 		fn terminate(
 			&mut self,
 			beneficiary: &AccountIdOf<Self::T>,
-		) -> Result<(), DispatchError> {
+		) -> Result<u32, DispatchError> {
 			(**self).terminate(beneficiary)
 		}
 		fn call(

@@ -325,13 +325,14 @@ where
 	pub fn try_eviction(
 		account: &T::AccountId,
 		handicap: T::BlockNumber,
-	) -> Result<Option<BalanceOf<T>>, DispatchError> {
+	) -> Result<(Option<BalanceOf<T>>, u32), DispatchError> {
 		let contract = <ContractInfoOf<T>>::get(account);
 		let contract = match contract {
-			None | Some(ContractInfo::Tombstone(_)) => return Ok(None),
+			None | Some(ContractInfo::Tombstone(_)) => return Ok((None, 0)),
 			Some(ContractInfo::Alive(contract)) => contract,
 		};
 		let module = PrefabWasmModule::<T>::from_storage_noinstr(contract.code_hash)?;
+		let code_len = module.pristine_size();
 		let current_block_number = <frame_system::Module<T>>::block_number();
 		let verdict = Self::consider_case(
 			account,
@@ -353,9 +354,9 @@ where
 				Self::enact_verdict(
 					account, contract, current_block_number, verdict, Some(module),
 				)?;
-				Ok(Some(rent_payed))
+				Ok((Some(rent_payed), code_len))
 			}
-			_ => Ok(None),
+			_ => Ok((None, code_len)),
 		}
 	}
 
